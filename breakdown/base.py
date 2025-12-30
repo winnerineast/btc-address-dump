@@ -257,19 +257,6 @@ def _rotate_right(num: int, shift: int, size: int = 32):
 
 
 # -----------------------------------------------------------------------------
-K0 = 0x00000000
-K1 = 0x5A827999
-K2 = 0x6ED9EBA1
-K3 = 0x8F1BBCDC
-K4 = 0xA953FD4E
-KK0 = 0x50A28BE6
-KK1 = 0x5C4DD124
-KK2 = 0x6D703EF3
-KK3 = 0x7A6D76E9
-KK4 = 0x00000000
-
-PADDING = [0x80] + [0]*63
-
 def ROL(n, x):
     return ((x << n) & 0xffffffff) | (x >> (32 - n))
 
@@ -297,7 +284,6 @@ def R(a, b, c, d, e, Fj, Kj, sj, rj, X):
 def reverse_p2pkh(addr_p2pkh_compressed):
     # 1. Decode the Base58 string back into raw bytes
     decoded_bytes = base58.b58decode(addr_p2pkh_compressed)
-
     # The structure of decoded_bytes is:
     # [1 byte version] + [20 bytes out2] + [4 bytes checksum]
 
@@ -308,7 +294,41 @@ def reverse_p2pkh(addr_p2pkh_compressed):
     # 3. Extract the checksum (the last 4 bytes)
     checksum = decoded_bytes[21:]
 
-    return out2, checksum
+    state = list(struct.unpack("<5L", out2))
+
+    return state, out2, checksum
+
+
+def reverse_one_of_state(c, k, mod=0x100000000):
+    """
+    通用函数：已知 c = (k + a + b) % mod
+    其中 a < mod, b < mod - 1
+    返回 (a + b) 的所有可能取值列表
+    """
+    # 1. 定义 a+b 的取值范围
+    # a 的最大值是 mod - 1
+    # b 的最大值是 mod - 2 (根据你给出的 0xffffffff 且 b < 0xffffffff)
+    max_a = mod - 1
+    max_b = mod - 2
+    max_s = max_a + max_b
+    min_s = 0
+
+    # 2. 计算基础解 (最小非负解)
+    # Python 的 % 运算符能很好地处理 (c - k) 为负数的情况
+    s0 = (c - k) % mod
+
+    possible_sums = []
+
+    # 3. 寻找所有符合范围的 S = s0 + n * mod
+    # 由于 a+b 的最大值接近 2 * mod，n 只可能取 0 或 1
+    for n in range(3):  # 检查 n=0, 1, 2 以确保万无一失
+        current_s = s0 + n * mod
+        if min_s <= current_s <= max_s:
+            possible_sums.append(current_s)
+        elif current_s > max_s:
+            break
+
+    return possible_sums
 
 
 if __name__ == '__main__':
@@ -356,27 +376,19 @@ if __name__ == '__main__':
     message = (2 + (y & 1)).to_bytes(1, byteorder='big') + x.to_bytes(32, byteorder='big')
     message = bytearray(message) + b'\x80\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x08'
 
-    # Parsing
-    blocks = [] # contains 512-bit chunks of message
-    for i in range(0, len(message), 64): # 64 bytes is 512 bits
-        blocks.append(message[i:i+64])
-
     # Setting Initial Hash Value
-    h0 = 0x6a09e667
-    h1 = 0xbb67ae85
-    h2 = 0x3c6ef372
-    h3 = 0xa54ff53a
-    h5 = 0x9b05688c
-    h4 = 0x510e527f
-    h6 = 0x1f83d9ab
-    h7 = 0x5be0cd19
+    h0 = 1779033703
+    h1 = 3144134277
+    h2 = 1013904242
+    h3 = 2773480762
+    h5 = 2600822924
+    h4 = 1359893119
+    h6 = 528734635
+    h7 = 1541459225
 
     message_schedule = []
     for t in range(0, 64):
         if t <= 15:
-            # adds the t'th 32 bit word of the block,
-            # starting from leftmost word
-            # 4 bytes at a time
             message_schedule.append(bytes(message[t*4:(t*4)+4]))
         else:
             term1 = _sigma1(int.from_bytes(message_schedule[t-2], 'big'))
@@ -391,40 +403,40 @@ if __name__ == '__main__':
     assert len(message_schedule) == 64
 
     # Initialize working variables
-    a = h0
-    b = h1
-    c = h2
-    d = h3
-    e = h4
-    f = h5
-    g = h6
-    h = h7
+    a = 1779033703
+    b = 3144134277
+    c = 1013904242
+    d = 2773480762
+    e = 1359893119
+    f = 2600822924
+    g = 528734635
+    h = 1541459225
 
     # Iterate for t=0 to 63
     for t in range(64):
         t1 = ((h + _capsigma1(e) + _ch(e, f, g) + K[t] +
-               int.from_bytes(message_schedule[t], 'big')) % 2**32)
+               int.from_bytes(message_schedule[t], 'big')) % 4294967296)
 
-        t2 = (_capsigma0(a) + _maj(a, b, c)) % 2**32
+        t2 = (_capsigma0(a) + _maj(a, b, c)) % 4294967296
 
         h = g
         g = f
         f = e
-        e = (d + t1) % 2**32
+        e = (d + t1) % 4294967296
         d = c
         c = b
         b = a
-        a = (t1 + t2) % 2**32
+        a = (t1 + t2) % 4294967296
 
     # Compute intermediate hash value
-    h0 = (h0 + a) % 2**32
-    h1 = (h1 + b) % 2**32
-    h2 = (h2 + c) % 2**32
-    h3 = (h3 + d) % 2**32
-    h4 = (h4 + e) % 2**32
-    h5 = (h5 + f) % 2**32
-    h6 = (h6 + g) % 2**32
-    h7 = (h7 + h) % 2**32
+    h0 = (h0 + a) % 4294967296
+    h1 = (h1 + b) % 4294967296
+    h2 = (h2 + c) % 4294967296
+    h3 = (h3 + d) % 4294967296
+    h4 = (h4 + e) % 4294967296
+    h5 = (h5 + f) % 4294967296
+    h6 = (h6 + g) % 4294967296
+    h7 = (h7 + h) % 4294967296
 
     out1 = ((h0).to_bytes(4, 'big') + (h1).to_bytes(4, 'big') +
             (h2).to_bytes(4, 'big') + (h3).to_bytes(4, 'big') +
@@ -436,97 +448,92 @@ if __name__ == '__main__':
     buffer = out1 + bytes([128] + [0] * 23) + b'\x00\x01\x00\x00\x00\x00\x00\x00'
     x = struct.unpack('<16L', bytes(buffer[0:64]))
 
-    a = state[0]
-    b = state[1]
-    c = state[2]
-    d = state[3]
-    e = state[4]
-
+    a, b, c, d, e = 1732584193, 4023233417, 2562383102, 271733878, 3285377520
     # /* Round 1 */
-    a, c = R(a, b, c, d, e, F0, K0, 11, 0, x)
-    e, b = R(e, a, b, c, d, F0, K0, 14, 1, x)
-    d, a = R(d, e, a, b, c, F0, K0, 15, 2, x)
-    c, e = R(c, d, e, a, b, F0, K0, 12, 3, x)
-    b, d = R(b, c, d, e, a, F0, K0, 5, 4, x)
-    a, c = R(a, b, c, d, e, F0, K0, 8, 5, x)
-    e, b = R(e, a, b, c, d, F0, K0, 7, 6, x)
-    d, a = R(d, e, a, b, c, F0, K0, 9, 7, x)
-    c, e = R(c, d, e, a, b, F0, K0, 11, 8, x)
-    b, d = R(b, c, d, e, a, F0, K0, 13, 9, x)
-    a, c = R(a, b, c, d, e, F0, K0, 14, 10, x)
-    e, b = R(e, a, b, c, d, F0, K0, 15, 11, x)
-    d, a = R(d, e, a, b, c, F0, K0, 6, 12, x)
-    c, e = R(c, d, e, a, b, F0, K0, 7, 13, x)
-    b, d = R(b, c, d, e, a, F0, K0, 9, 14, x)
-    a, c = R(a, b, c, d, e, F0, K0, 8, 15, x)  # /* #15 */
+    a, c = R(a, b, c, d, e, F0, 0, 11, 0, x)
+    e, b = R(e, a, b, c, d, F0, 0, 14, 1, x)
+    d, a = R(d, e, a, b, c, F0, 0, 15, 2, x)
+    c, e = R(c, d, e, a, b, F0, 0, 12, 3, x)
+    b, d = R(b, c, d, e, a, F0, 0, 5, 4, x)
+    a, c = R(a, b, c, d, e, F0, 0, 8, 5, x)
+    e, b = R(e, a, b, c, d, F0, 0, 7, 6, x)
+    d, a = R(d, e, a, b, c, F0, 0, 9, 7, x)
+    c, e = R(c, d, e, a, b, F0, 0, 11, 8, x)
+    b, d = R(b, c, d, e, a, F0, 0, 13, 9, x)
+    a, c = R(a, b, c, d, e, F0, 0, 14, 10, x)
+    e, b = R(e, a, b, c, d, F0, 0, 15, 11, x)
+    d, a = R(d, e, a, b, c, F0, 0, 6, 12, x)
+    c, e = R(c, d, e, a, b, F0, 0, 7, 13, x)
+    b, d = R(b, c, d, e, a, F0, 0, 9, 14, x)
+    a, c = R(a, b, c, d, e, F0, 0, 8, 15, x)  # /* #15 */
     # /* Round 2 */
-    e, b = R(e, a, b, c, d, F1, K1, 7, 7, x)
-    d, a = R(d, e, a, b, c, F1, K1, 6, 4, x)
-    c, e = R(c, d, e, a, b, F1, K1, 8, 13, x)
-    b, d = R(b, c, d, e, a, F1, K1, 13, 1, x)
-    a, c = R(a, b, c, d, e, F1, K1, 11, 10, x)
-    e, b = R(e, a, b, c, d, F1, K1, 9, 6, x)
-    d, a = R(d, e, a, b, c, F1, K1, 7, 15, x)
-    c, e = R(c, d, e, a, b, F1, K1, 15, 3, x)
-    b, d = R(b, c, d, e, a, F1, K1, 7, 12, x)
-    a, c = R(a, b, c, d, e, F1, K1, 12, 0, x)
-    e, b = R(e, a, b, c, d, F1, K1, 15, 9, x)
-    d, a = R(d, e, a, b, c, F1, K1, 9, 5, x)
-    c, e = R(c, d, e, a, b, F1, K1, 11, 2, x)
-    b, d = R(b, c, d, e, a, F1, K1, 7, 14, x)
-    a, c = R(a, b, c, d, e, F1, K1, 13, 11, x)
-    e, b = R(e, a, b, c, d, F1, K1, 12, 8, x)  # /* #31 */
+    e, b = R(e, a, b, c, d, F1, 0x5A827999, 7, 7, x)
+    d, a = R(d, e, a, b, c, F1, 0x5A827999, 6, 4, x)
+    c, e = R(c, d, e, a, b, F1, 0x5A827999, 8, 13, x)
+    b, d = R(b, c, d, e, a, F1, 0x5A827999, 13, 1, x)
+    a, c = R(a, b, c, d, e, F1, 0x5A827999, 11, 10, x)
+    e, b = R(e, a, b, c, d, F1, 0x5A827999, 9, 6, x)
+    d, a = R(d, e, a, b, c, F1, 0x5A827999, 7, 15, x)
+    c, e = R(c, d, e, a, b, F1, 0x5A827999, 15, 3, x)
+    b, d = R(b, c, d, e, a, F1, 0x5A827999, 7, 12, x)
+    a, c = R(a, b, c, d, e, F1, 0x5A827999, 12, 0, x)
+    e, b = R(e, a, b, c, d, F1, 0x5A827999, 15, 9, x)
+    d, a = R(d, e, a, b, c, F1, 0x5A827999, 9, 5, x)
+    c, e = R(c, d, e, a, b, F1, 0x5A827999, 11, 2, x)
+    b, d = R(b, c, d, e, a, F1, 0x5A827999, 7, 14, x)
+    a, c = R(a, b, c, d, e, F1, 0x5A827999, 13, 11, x)
+    e, b = R(e, a, b, c, d, F1, 0x5A827999, 12, 8, x)  # /* #31 */
     # /* Round 3 */
-    d, a = R(d, e, a, b, c, F2, K2, 11, 3, x)
-    c, e = R(c, d, e, a, b, F2, K2, 13, 10, x)
-    b, d = R(b, c, d, e, a, F2, K2, 6, 14, x)
-    a, c = R(a, b, c, d, e, F2, K2, 7, 4, x)
-    e, b = R(e, a, b, c, d, F2, K2, 14, 9, x)
-    d, a = R(d, e, a, b, c, F2, K2, 9, 15, x)
-    c, e = R(c, d, e, a, b, F2, K2, 13, 8, x)
-    b, d = R(b, c, d, e, a, F2, K2, 15, 1, x)
-    a, c = R(a, b, c, d, e, F2, K2, 14, 2, x)
-    e, b = R(e, a, b, c, d, F2, K2, 8, 7, x)
-    d, a = R(d, e, a, b, c, F2, K2, 13, 0, x)
-    c, e = R(c, d, e, a, b, F2, K2, 6, 6, x)
-    b, d = R(b, c, d, e, a, F2, K2, 5, 13, x)
-    a, c = R(a, b, c, d, e, F2, K2, 12, 11, x)
-    e, b = R(e, a, b, c, d, F2, K2, 7, 5, x)
-    d, a = R(d, e, a, b, c, F2, K2, 5, 12, x)  # /* #47 */
+    d, a = R(d, e, a, b, c, F2, 0x6ED9EBA1, 11, 3, x)
+    c, e = R(c, d, e, a, b, F2, 0x6ED9EBA1, 13, 10, x)
+    b, d = R(b, c, d, e, a, F2, 0x6ED9EBA1, 6, 14, x)
+    a, c = R(a, b, c, d, e, F2, 0x6ED9EBA1, 7, 4, x)
+    e, b = R(e, a, b, c, d, F2, 0x6ED9EBA1, 14, 9, x)
+    d, a = R(d, e, a, b, c, F2, 0x6ED9EBA1, 9, 15, x)
+    c, e = R(c, d, e, a, b, F2, 0x6ED9EBA1, 13, 8, x)
+    b, d = R(b, c, d, e, a, F2, 0x6ED9EBA1, 15, 1, x)
+    a, c = R(a, b, c, d, e, F2, 0x6ED9EBA1, 14, 2, x)
+    e, b = R(e, a, b, c, d, F2, 0x6ED9EBA1, 8, 7, x)
+    d, a = R(d, e, a, b, c, F2, 0x6ED9EBA1, 13, 0, x)
+    c, e = R(c, d, e, a, b, F2, 0x6ED9EBA1, 6, 6, x)
+    b, d = R(b, c, d, e, a, F2, 0x6ED9EBA1, 5, 13, x)
+    a, c = R(a, b, c, d, e, F2, 0x6ED9EBA1, 12, 11, x)
+    e, b = R(e, a, b, c, d, F2, 0x6ED9EBA1, 7, 5, x)
+    d, a = R(d, e, a, b, c, F2, 0x6ED9EBA1, 5, 12, x)  # /* #47 */
     # /* Round 4 */
-    c, e = R(c, d, e, a, b, F3, K3, 11, 1, x)
-    b, d = R(b, c, d, e, a, F3, K3, 12, 9, x)
-    a, c = R(a, b, c, d, e, F3, K3, 14, 11, x)
-    e, b = R(e, a, b, c, d, F3, K3, 15, 10, x)
-    d, a = R(d, e, a, b, c, F3, K3, 14, 0, x)
-    c, e = R(c, d, e, a, b, F3, K3, 15, 8, x)
-    b, d = R(b, c, d, e, a, F3, K3, 9, 12, x)
-    a, c = R(a, b, c, d, e, F3, K3, 8, 4, x)
-    e, b = R(e, a, b, c, d, F3, K3, 9, 13, x)
-    d, a = R(d, e, a, b, c, F3, K3, 14, 3, x)
-    c, e = R(c, d, e, a, b, F3, K3, 5, 7, x)
-    b, d = R(b, c, d, e, a, F3, K3, 6, 15, x)
-    a, c = R(a, b, c, d, e, F3, K3, 8, 14, x)
-    e, b = R(e, a, b, c, d, F3, K3, 6, 5, x)
-    d, a = R(d, e, a, b, c, F3, K3, 5, 6, x)
-    c, e = R(c, d, e, a, b, F3, K3, 12, 2, x)  # /* #63 */
+    c, e = R(c, d, e, a, b, F3, 0x8F1BBCDC, 11, 1, x)
+    b, d = R(b, c, d, e, a, F3, 0x8F1BBCDC, 12, 9, x)
+    a, c = R(a, b, c, d, e, F3, 0x8F1BBCDC, 14, 11, x)
+    e, b = R(e, a, b, c, d, F3, 0x8F1BBCDC, 15, 10, x)
+    d, a = R(d, e, a, b, c, F3, 0x8F1BBCDC, 14, 0, x)
+    c, e = R(c, d, e, a, b, F3, 0x8F1BBCDC, 15, 8, x)
+    b, d = R(b, c, d, e, a, F3, 0x8F1BBCDC, 9, 12, x)
+    a, c = R(a, b, c, d, e, F3, 0x8F1BBCDC, 8, 4, x)
+    e, b = R(e, a, b, c, d, F3, 0x8F1BBCDC, 9, 13, x)
+    d, a = R(d, e, a, b, c, F3, 0x8F1BBCDC, 14, 3, x)
+    c, e = R(c, d, e, a, b, F3, 0x8F1BBCDC, 5, 7, x)
+    b, d = R(b, c, d, e, a, F3, 0x8F1BBCDC, 6, 15, x)
+    a, c = R(a, b, c, d, e, F3, 0x8F1BBCDC, 8, 14, x)
+    e, b = R(e, a, b, c, d, F3, 0x8F1BBCDC, 6, 5, x)
+    d, a = R(d, e, a, b, c, F3, 0x8F1BBCDC, 5, 6, x)
+    c, e = R(c, d, e, a, b, F3, 0x8F1BBCDC, 12, 2, x)  # /* #63 */
     # /* Round 5 */
-    b, d = R(b, c, d, e, a, F4, K4, 9, 4, x)
-    a, c = R(a, b, c, d, e, F4, K4, 15, 0, x)
-    e, b = R(e, a, b, c, d, F4, K4, 5, 5, x)
-    d, a = R(d, e, a, b, c, F4, K4, 11, 9, x)
-    c, e = R(c, d, e, a, b, F4, K4, 6, 7, x)
-    b, d = R(b, c, d, e, a, F4, K4, 8, 12, x)
-    a, c = R(a, b, c, d, e, F4, K4, 13, 2, x)
-    e, b = R(e, a, b, c, d, F4, K4, 12, 10, x)
-    d, a = R(d, e, a, b, c, F4, K4, 5, 14, x)
-    c, e = R(c, d, e, a, b, F4, K4, 12, 1, x)
-    b, d = R(b, c, d, e, a, F4, K4, 13, 3, x)
-    a, c = R(a, b, c, d, e, F4, K4, 14, 8, x)
-    e, b = R(e, a, b, c, d, F4, K4, 11, 11, x)
-    d, a = R(d, e, a, b, c, F4, K4, 8, 6, x)
-    c, e = R(c, d, e, a, b, F4, K4, 5, 15, x)
-    b, d = R(b, c, d, e, a, F4, K4, 6, 13, x)  # /* #79 */
+    b, d = R(b, c, d, e, a, F4, 0xA953FD4E, 9, 4, x)
+    a, c = R(a, b, c, d, e, F4, 0xA953FD4E, 15, 0, x)
+    e, b = R(e, a, b, c, d, F4, 0xA953FD4E, 5, 5, x)
+    d, a = R(d, e, a, b, c, F4, 0xA953FD4E, 11, 9, x)
+    c, e = R(c, d, e, a, b, F4, 0xA953FD4E, 6, 7, x)
+    b, d = R(b, c, d, e, a, F4, 0xA953FD4E, 8, 12, x)
+    a, c = R(a, b, c, d, e, F4, 0xA953FD4E, 13, 2, x)
+    e, b = R(e, a, b, c, d, F4, 0xA953FD4E, 12, 10, x)
+    d, a = R(d, e, a, b, c, F4, 0xA953FD4E, 5, 14, x)
+    c, e = R(c, d, e, a, b, F4, 0xA953FD4E, 12, 1, x)
+    b, d = R(b, c, d, e, a, F4, 0xA953FD4E, 13, 3, x)
+    a, c = R(a, b, c, d, e, F4, 0xA953FD4E, 14, 8, x)
+    e, b = R(e, a, b, c, d, F4, 0xA953FD4E, 11, 11, x)
+    d, a = R(d, e, a, b, c, F4, 0xA953FD4E, 8, 6, x)
+    c, e = R(c, d, e, a, b, F4, 0xA953FD4E, 5, 15, x)
+    b, d = R(b, c, d, e, a, F4, 0xA953FD4E, 6, 13, x)  # /* #79 */
 
     aa = a
     bb = b
@@ -534,104 +541,99 @@ if __name__ == '__main__':
     dd = d
     ee = e
 
-    a = state[0]
-    b = state[1]
-    c = state[2]
-    d = state[3]
-    e = state[4]
+    a, b, c, d, e = 1732584193, 4023233417, 2562383102, 271733878, 3285377520
 
     # /* Parallel round 1 */
-    a, c = R(a, b, c, d, e, F4, KK0, 8, 5, x)
-    e, b = R(e, a, b, c, d, F4, KK0, 9, 14, x)
-    d, a = R(d, e, a, b, c, F4, KK0, 9, 7, x)
-    c, e = R(c, d, e, a, b, F4, KK0, 11, 0, x)
-    b, d = R(b, c, d, e, a, F4, KK0, 13, 9, x)
-    a, c = R(a, b, c, d, e, F4, KK0, 15, 2, x)
-    e, b = R(e, a, b, c, d, F4, KK0, 15, 11, x)
-    d, a = R(d, e, a, b, c, F4, KK0, 5, 4, x)
-    c, e = R(c, d, e, a, b, F4, KK0, 7, 13, x)
-    b, d = R(b, c, d, e, a, F4, KK0, 7, 6, x)
-    a, c = R(a, b, c, d, e, F4, KK0, 8, 15, x)
-    e, b = R(e, a, b, c, d, F4, KK0, 11, 8, x)
-    d, a = R(d, e, a, b, c, F4, KK0, 14, 1, x)
-    c, e = R(c, d, e, a, b, F4, KK0, 14, 10, x)
-    b, d = R(b, c, d, e, a, F4, KK0, 12, 3, x)
-    a, c = R(a, b, c, d, e, F4, KK0, 6, 12, x)  # /* #15 */
+    a, c = R(a, b, c, d, e, F4, 0x50A28BE6, 8, 5, x)
+    e, b = R(e, a, b, c, d, F4, 0x50A28BE6, 9, 14, x)
+    d, a = R(d, e, a, b, c, F4, 0x50A28BE6, 9, 7, x)
+    c, e = R(c, d, e, a, b, F4, 0x50A28BE6, 11, 0, x)
+    b, d = R(b, c, d, e, a, F4, 0x50A28BE6, 13, 9, x)
+    a, c = R(a, b, c, d, e, F4, 0x50A28BE6, 15, 2, x)
+    e, b = R(e, a, b, c, d, F4, 0x50A28BE6, 15, 11, x)
+    d, a = R(d, e, a, b, c, F4, 0x50A28BE6, 5, 4, x)
+    c, e = R(c, d, e, a, b, F4, 0x50A28BE6, 7, 13, x)
+    b, d = R(b, c, d, e, a, F4, 0x50A28BE6, 7, 6, x)
+    a, c = R(a, b, c, d, e, F4, 0x50A28BE6, 8, 15, x)
+    e, b = R(e, a, b, c, d, F4, 0x50A28BE6, 11, 8, x)
+    d, a = R(d, e, a, b, c, F4, 0x50A28BE6, 14, 1, x)
+    c, e = R(c, d, e, a, b, F4, 0x50A28BE6, 14, 10, x)
+    b, d = R(b, c, d, e, a, F4, 0x50A28BE6, 12, 3, x)
+    a, c = R(a, b, c, d, e, F4, 0x50A28BE6, 6, 12, x)  # /* #15 */
     # /* Parallel round 2 */
-    e, b = R(e, a, b, c, d, F3, KK1, 9, 6, x)
-    d, a = R(d, e, a, b, c, F3, KK1, 13, 11, x)
-    c, e = R(c, d, e, a, b, F3, KK1, 15, 3, x)
-    b, d = R(b, c, d, e, a, F3, KK1, 7, 7, x)
-    a, c = R(a, b, c, d, e, F3, KK1, 12, 0, x)
-    e, b = R(e, a, b, c, d, F3, KK1, 8, 13, x)
-    d, a = R(d, e, a, b, c, F3, KK1, 9, 5, x)
-    c, e = R(c, d, e, a, b, F3, KK1, 11, 10, x)
-    b, d = R(b, c, d, e, a, F3, KK1, 7, 14, x)
-    a, c = R(a, b, c, d, e, F3, KK1, 7, 15, x)
-    e, b = R(e, a, b, c, d, F3, KK1, 12, 8, x)
-    d, a = R(d, e, a, b, c, F3, KK1, 7, 12, x)
-    c, e = R(c, d, e, a, b, F3, KK1, 6, 4, x)
-    b, d = R(b, c, d, e, a, F3, KK1, 15, 9, x)
-    a, c = R(a, b, c, d, e, F3, KK1, 13, 1, x)
-    e, b = R(e, a, b, c, d, F3, KK1, 11, 2, x)  # /* #31 */
+    e, b = R(e, a, b, c, d, F3, 0x5C4DD124, 9, 6, x)
+    d, a = R(d, e, a, b, c, F3, 0x5C4DD124, 13, 11, x)
+    c, e = R(c, d, e, a, b, F3, 0x5C4DD124, 15, 3, x)
+    b, d = R(b, c, d, e, a, F3, 0x5C4DD124, 7, 7, x)
+    a, c = R(a, b, c, d, e, F3, 0x5C4DD124, 12, 0, x)
+    e, b = R(e, a, b, c, d, F3, 0x5C4DD124, 8, 13, x)
+    d, a = R(d, e, a, b, c, F3, 0x5C4DD124, 9, 5, x)
+    c, e = R(c, d, e, a, b, F3, 0x5C4DD124, 11, 10, x)
+    b, d = R(b, c, d, e, a, F3, 0x5C4DD124, 7, 14, x)
+    a, c = R(a, b, c, d, e, F3, 0x5C4DD124, 7, 15, x)
+    e, b = R(e, a, b, c, d, F3, 0x5C4DD124, 12, 8, x)
+    d, a = R(d, e, a, b, c, F3, 0x5C4DD124, 7, 12, x)
+    c, e = R(c, d, e, a, b, F3, 0x5C4DD124, 6, 4, x)
+    b, d = R(b, c, d, e, a, F3, 0x5C4DD124, 15, 9, x)
+    a, c = R(a, b, c, d, e, F3, 0x5C4DD124, 13, 1, x)
+    e, b = R(e, a, b, c, d, F3, 0x5C4DD124, 11, 2, x)  # /* #31 */
     # /* Parallel round 3 */
-    d, a = R(d, e, a, b, c, F2, KK2, 9, 15, x)
-    c, e = R(c, d, e, a, b, F2, KK2, 7, 5, x)
-    b, d = R(b, c, d, e, a, F2, KK2, 15, 1, x)
-    a, c = R(a, b, c, d, e, F2, KK2, 11, 3, x)
-    e, b = R(e, a, b, c, d, F2, KK2, 8, 7, x)
-    d, a = R(d, e, a, b, c, F2, KK2, 6, 14, x)
-    c, e = R(c, d, e, a, b, F2, KK2, 6, 6, x)
-    b, d = R(b, c, d, e, a, F2, KK2, 14, 9, x)
-    a, c = R(a, b, c, d, e, F2, KK2, 12, 11, x)
-    e, b = R(e, a, b, c, d, F2, KK2, 13, 8, x)
-    d, a = R(d, e, a, b, c, F2, KK2, 5, 12, x)
-    c, e = R(c, d, e, a, b, F2, KK2, 14, 2, x)
-    b, d = R(b, c, d, e, a, F2, KK2, 13, 10, x)
-    a, c = R(a, b, c, d, e, F2, KK2, 13, 0, x)
-    e, b = R(e, a, b, c, d, F2, KK2, 7, 4, x)
-    d, a = R(d, e, a, b, c, F2, KK2, 5, 13, x)  # /* #47 */
+    d, a = R(d, e, a, b, c, F2, 0x6D703EF3, 9, 15, x)
+    c, e = R(c, d, e, a, b, F2, 0x6D703EF3, 7, 5, x)
+    b, d = R(b, c, d, e, a, F2, 0x6D703EF3, 15, 1, x)
+    a, c = R(a, b, c, d, e, F2, 0x6D703EF3, 11, 3, x)
+    e, b = R(e, a, b, c, d, F2, 0x6D703EF3, 8, 7, x)
+    d, a = R(d, e, a, b, c, F2, 0x6D703EF3, 6, 14, x)
+    c, e = R(c, d, e, a, b, F2, 0x6D703EF3, 6, 6, x)
+    b, d = R(b, c, d, e, a, F2, 0x6D703EF3, 14, 9, x)
+    a, c = R(a, b, c, d, e, F2, 0x6D703EF3, 12, 11, x)
+    e, b = R(e, a, b, c, d, F2, 0x6D703EF3, 13, 8, x)
+    d, a = R(d, e, a, b, c, F2, 0x6D703EF3, 5, 12, x)
+    c, e = R(c, d, e, a, b, F2, 0x6D703EF3, 14, 2, x)
+    b, d = R(b, c, d, e, a, F2, 0x6D703EF3, 13, 10, x)
+    a, c = R(a, b, c, d, e, F2, 0x6D703EF3, 13, 0, x)
+    e, b = R(e, a, b, c, d, F2, 0x6D703EF3, 7, 4, x)
+    d, a = R(d, e, a, b, c, F2, 0x6D703EF3, 5, 13, x)  # /* #47 */
     # /* Parallel round 4 */
-    c, e = R(c, d, e, a, b, F1, KK3, 15, 8, x)
-    b, d = R(b, c, d, e, a, F1, KK3, 5, 6, x)
-    a, c = R(a, b, c, d, e, F1, KK3, 8, 4, x)
-    e, b = R(e, a, b, c, d, F1, KK3, 11, 1, x)
-    d, a = R(d, e, a, b, c, F1, KK3, 14, 3, x)
-    c, e = R(c, d, e, a, b, F1, KK3, 14, 11, x)
-    b, d = R(b, c, d, e, a, F1, KK3, 6, 15, x)
-    a, c = R(a, b, c, d, e, F1, KK3, 14, 0, x)
-    e, b = R(e, a, b, c, d, F1, KK3, 6, 5, x)
-    d, a = R(d, e, a, b, c, F1, KK3, 9, 12, x)
-    c, e = R(c, d, e, a, b, F1, KK3, 12, 2, x)
-    b, d = R(b, c, d, e, a, F1, KK3, 9, 13, x)
-    a, c = R(a, b, c, d, e, F1, KK3, 12, 9, x)
-    e, b = R(e, a, b, c, d, F1, KK3, 5, 7, x)
-    d, a = R(d, e, a, b, c, F1, KK3, 15, 10, x)
-    c, e = R(c, d, e, a, b, F1, KK3, 8, 14, x)  # /* #63 */
+    c, e = R(c, d, e, a, b, F1, 0x7A6D76E9, 15, 8, x)
+    b, d = R(b, c, d, e, a, F1, 0x7A6D76E9, 5, 6, x)
+    a, c = R(a, b, c, d, e, F1, 0x7A6D76E9, 8, 4, x)
+    e, b = R(e, a, b, c, d, F1, 0x7A6D76E9, 11, 1, x)
+    d, a = R(d, e, a, b, c, F1, 0x7A6D76E9, 14, 3, x)
+    c, e = R(c, d, e, a, b, F1, 0x7A6D76E9, 14, 11, x)
+    b, d = R(b, c, d, e, a, F1, 0x7A6D76E9, 6, 15, x)
+    a, c = R(a, b, c, d, e, F1, 0x7A6D76E9, 14, 0, x)
+    e, b = R(e, a, b, c, d, F1, 0x7A6D76E9, 6, 5, x)
+    d, a = R(d, e, a, b, c, F1, 0x7A6D76E9, 9, 12, x)
+    c, e = R(c, d, e, a, b, F1, 0x7A6D76E9, 12, 2, x)
+    b, d = R(b, c, d, e, a, F1, 0x7A6D76E9, 9, 13, x)
+    a, c = R(a, b, c, d, e, F1, 0x7A6D76E9, 12, 9, x)
+    e, b = R(e, a, b, c, d, F1, 0x7A6D76E9, 5, 7, x)
+    d, a = R(d, e, a, b, c, F1, 0x7A6D76E9, 15, 10, x)
+    c, e = R(c, d, e, a, b, F1, 0x7A6D76E9, 8, 14, x)  # /* #63 */
     # /* Parallel round 5 */
-    b, d = R(b, c, d, e, a, F0, KK4, 8, 12, x)
-    a, c = R(a, b, c, d, e, F0, KK4, 5, 15, x)
-    e, b = R(e, a, b, c, d, F0, KK4, 12, 10, x)
-    d, a = R(d, e, a, b, c, F0, KK4, 9, 4, x)
-    c, e = R(c, d, e, a, b, F0, KK4, 12, 1, x)
-    b, d = R(b, c, d, e, a, F0, KK4, 5, 5, x)
-    a, c = R(a, b, c, d, e, F0, KK4, 14, 8, x)
-    e, b = R(e, a, b, c, d, F0, KK4, 6, 7, x)
-    d, a = R(d, e, a, b, c, F0, KK4, 8, 6, x)
-    c, e = R(c, d, e, a, b, F0, KK4, 13, 2, x)
-    b, d = R(b, c, d, e, a, F0, KK4, 6, 13, x)
-    a, c = R(a, b, c, d, e, F0, KK4, 5, 14, x)
-    e, b = R(e, a, b, c, d, F0, KK4, 15, 0, x)
-    d, a = R(d, e, a, b, c, F0, KK4, 13, 3, x)
-    c, e = R(c, d, e, a, b, F0, KK4, 11, 9, x)
-    b, d = R(b, c, d, e, a, F0, KK4, 11, 11, x)  # /* #79 */
+    b, d = R(b, c, d, e, a, F0, 0, 8, 12, x)
+    a, c = R(a, b, c, d, e, F0, 0, 5, 15, x)
+    e, b = R(e, a, b, c, d, F0, 0, 12, 10, x)
+    d, a = R(d, e, a, b, c, F0, 0, 9, 4, x)
+    c, e = R(c, d, e, a, b, F0, 0, 12, 1, x)
+    b, d = R(b, c, d, e, a, F0, 0, 5, 5, x)
+    a, c = R(a, b, c, d, e, F0, 0, 14, 8, x)
+    e, b = R(e, a, b, c, d, F0, 0, 6, 7, x)
+    d, a = R(d, e, a, b, c, F0, 0, 8, 6, x)
+    c, e = R(c, d, e, a, b, F0, 0, 13, 2, x)
+    b, d = R(b, c, d, e, a, F0, 0, 6, 13, x)
+    a, c = R(a, b, c, d, e, F0, 0, 5, 14, x)
+    e, b = R(e, a, b, c, d, F0, 0, 15, 0, x)
+    d, a = R(d, e, a, b, c, F0, 0, 13, 3, x)
+    c, e = R(c, d, e, a, b, F0, 0, 11, 9, x)
+    b, d = R(b, c, d, e, a, F0, 0, 11, 11, x)  # /* #79 */
 
-    t = (state[1] + cc + d) % 0x100000000
-    state[1] = (state[2] + dd + e) % 0x100000000
-    state[2] = (state[3] + ee + a) % 0x100000000
-    state[3] = (state[4] + aa + b) % 0x100000000
-    state[4] = (state[0] + bb + c) % 0x100000000
-    state[0] = t % 0x100000000
+    state[1] = (2562383102 + dd + e) % 0x100000000
+    state[2] = (271733878 + ee + a) % 0x100000000
+    state[3] = (3285377520 + aa + b) % 0x100000000
+    state[4] = (1732584193 + bb + c) % 0x100000000
+    state[0] = (4023233417 + cc + d) % 0x100000000
 
     out2 = struct.pack("<5L", *state)
 
@@ -644,15 +646,39 @@ if __name__ == '__main__':
     if addr_p2pkh_compressed and addr_p2pkh_compressed.decode('ascii') == "13ia7qiYrjvYyH2X8yqW5Nih8PZyTANQdU":
         print("legacy address (p2pkh compressed) = {}".format(addr_p2pkh_compressed.decode('ascii')))
 
-    rev_out2, rev_checksum = reverse_p2pkh(addr_p2pkh_compressed)
-    if rev_out2 == out2 and rev_checksum == checksum:
-        print("Good reverse to out2 and checksum")
+    rev_state, rev_out2, rev_checksum = reverse_p2pkh(addr_p2pkh_compressed)
+    if rev_out2 == out2 and rev_checksum == checksum and rev_state == state:
+        print("Good reverse to state, out2 and checksum")
+
+    p_state_1 = reverse_one_of_state(state[1], 2562383102)
+    p_state_2 = reverse_one_of_state(state[2], 271733878)
+    p_state_3 = reverse_one_of_state(state[3], 3285377520)
+    p_state_4 = reverse_one_of_state(state[4], 1732584193)
+    p_state_0 = reverse_one_of_state(state[0], 4023233417)
+    if ((dd + e) in p_state_1 and
+            (ee + a) in p_state_2 and
+            (aa + b) in p_state_3 and
+            (bb + c) in p_state_4 and
+            (cc + d) in p_state_0):
+        print("Good reverse of state 1, 2, 3, 4, 0")
 
     target_address = '13KYdPnzGh5H8exFY3FhUo9Rvvs6kKAcL8'.encode('ascii')
-    target_out2, target_checksum = reverse_p2pkh(target_address)
+    target_state, target_out2, target_checksum = reverse_p2pkh(target_address)
     s1 = generate_hash(b'\x00' + target_out2)
     s2 = generate_hash(s1)
     calculated_target_checksum = s2[0:4]
     print("target out2 = {}".format(target_out2))
+    print("target state = {}".format(target_state))
     print("target checksum = {}".format(target_checksum))
     print("calculated target checksum = {}".format(calculated_target_checksum))
+
+    p_state_1 = reverse_one_of_state(target_state[1], 2562383102)
+    p_state_2 = reverse_one_of_state(target_state[2], 271733878)
+    p_state_3 = reverse_one_of_state(target_state[3], 3285377520)
+    p_state_4 = reverse_one_of_state(target_state[4], 1732584193)
+    p_state_0 = reverse_one_of_state(target_state[0], 4023233417)
+    print("p_state_1 = {}".format(p_state_1))
+    print("p_state_2 = {}".format(p_state_2))
+    print("p_state_3 = {}".format(p_state_3))
+    print("p_state_4 = {}".format(p_state_4))
+    print("p_state_0 = {}".format(p_state_0))
