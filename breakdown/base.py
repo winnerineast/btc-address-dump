@@ -257,53 +257,6 @@ def _rotate_right(num: int, shift: int, size: int = 32):
 
 
 # -----------------------------------------------------------------------------
-# public interface
-
-def ripemd160(b: bytes) -> bytes:
-    """ simple wrapper for a simpler API to this hash function, just bytes to bytes """
-    ctx = RMDContext()
-    RMD160Update(ctx, b, len(b))
-
-    size = struct.pack("<Q", ctx.count)
-    padlen = 64 - ((ctx.count // 8) % 64)
-    if padlen < 1 + 8:
-        padlen += 64
-    RMD160Update(ctx, PADDING, padlen-8)
-    RMD160Update(ctx, size, 8)
-    return struct.pack("<5L", *ctx.state)
-
-
-# -----------------------------------------------------------------------------
-
-class RMDContext:
-    def __init__(self):
-        self.state = [0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476, 0xC3D2E1F0] # uint32
-        self.count = 0 # uint64
-        self.buffer = [0]*64 # uchar
-
-def RMD160Update(ctx, inp, inplen):
-    have = int((ctx.count // 8) % 64)
-    inplen = int(inplen)
-    need = 64 - have
-    ctx.count += 8 * inplen
-    off = 0
-    if inplen >= need:
-        if have:
-            for i in range(need):
-                ctx.buffer[have+i] = inp[i]
-            RMD160Transform(ctx.state, ctx.buffer)
-            off = need
-            have = 0
-        while off + 64 <= inplen:
-            RMD160Transform(ctx.state, inp[off:]) #<---
-            off += 64
-    if off < inplen:
-        for i in range(inplen - off):
-            ctx.buffer[have+i] = inp[off+i]
-
-
-# -----------------------------------------------------------------------------
-
 K0 = 0x00000000
 K1 = 0x5A827999
 K2 = 0x6ED9EBA1
@@ -340,208 +293,22 @@ def R(a, b, c, d, e, Fj, Kj, sj, rj, X):
     c = ROL(10, c)
     return a % 0x100000000, c
 
-def RMD160Transform(state, block): #uint32 state[5], uchar block[64]
 
-    x = [0]*16
-    assert sys.byteorder == 'little', "Only little endian is supported atm for RIPEMD160"
-    x = struct.unpack('<16L', bytes(block[0:64]))
+def reverse_p2pkh(addr_p2pkh_compressed):
+    # 1. Decode the Base58 string back into raw bytes
+    decoded_bytes = base58.b58decode(addr_p2pkh_compressed)
 
-    a = state[0]
-    b = state[1]
-    c = state[2]
-    d = state[3]
-    e = state[4]
+    # The structure of decoded_bytes is:
+    # [1 byte version] + [20 bytes out2] + [4 bytes checksum]
 
-    #/* Round 1 */
-    a, c = R(a, b, c, d, e, F0, K0, 11,  0, x)
-    e, b = R(e, a, b, c, d, F0, K0, 14,  1, x)
-    d, a = R(d, e, a, b, c, F0, K0, 15,  2, x)
-    c, e = R(c, d, e, a, b, F0, K0, 12,  3, x)
-    b, d = R(b, c, d, e, a, F0, K0,  5,  4, x)
-    a, c = R(a, b, c, d, e, F0, K0,  8,  5, x)
-    e, b = R(e, a, b, c, d, F0, K0,  7,  6, x)
-    d, a = R(d, e, a, b, c, F0, K0,  9,  7, x)
-    c, e = R(c, d, e, a, b, F0, K0, 11,  8, x)
-    b, d = R(b, c, d, e, a, F0, K0, 13,  9, x)
-    a, c = R(a, b, c, d, e, F0, K0, 14, 10, x)
-    e, b = R(e, a, b, c, d, F0, K0, 15, 11, x)
-    d, a = R(d, e, a, b, c, F0, K0,  6, 12, x)
-    c, e = R(c, d, e, a, b, F0, K0,  7, 13, x)
-    b, d = R(b, c, d, e, a, F0, K0,  9, 14, x)
-    a, c = R(a, b, c, d, e, F0, K0,  8, 15, x) #/* #15 */
-    #/* Round 2 */
-    e, b = R(e, a, b, c, d, F1, K1,  7,  7, x)
-    d, a = R(d, e, a, b, c, F1, K1,  6,  4, x)
-    c, e = R(c, d, e, a, b, F1, K1,  8, 13, x)
-    b, d = R(b, c, d, e, a, F1, K1, 13,  1, x)
-    a, c = R(a, b, c, d, e, F1, K1, 11, 10, x)
-    e, b = R(e, a, b, c, d, F1, K1,  9,  6, x)
-    d, a = R(d, e, a, b, c, F1, K1,  7, 15, x)
-    c, e = R(c, d, e, a, b, F1, K1, 15,  3, x)
-    b, d = R(b, c, d, e, a, F1, K1,  7, 12, x)
-    a, c = R(a, b, c, d, e, F1, K1, 12,  0, x)
-    e, b = R(e, a, b, c, d, F1, K1, 15,  9, x)
-    d, a = R(d, e, a, b, c, F1, K1,  9,  5, x)
-    c, e = R(c, d, e, a, b, F1, K1, 11,  2, x)
-    b, d = R(b, c, d, e, a, F1, K1,  7, 14, x)
-    a, c = R(a, b, c, d, e, F1, K1, 13, 11, x)
-    e, b = R(e, a, b, c, d, F1, K1, 12,  8, x) #/* #31 */
-    #/* Round 3 */
-    d, a = R(d, e, a, b, c, F2, K2, 11,  3, x)
-    c, e = R(c, d, e, a, b, F2, K2, 13, 10, x)
-    b, d = R(b, c, d, e, a, F2, K2,  6, 14, x)
-    a, c = R(a, b, c, d, e, F2, K2,  7,  4, x)
-    e, b = R(e, a, b, c, d, F2, K2, 14,  9, x)
-    d, a = R(d, e, a, b, c, F2, K2,  9, 15, x)
-    c, e = R(c, d, e, a, b, F2, K2, 13,  8, x)
-    b, d = R(b, c, d, e, a, F2, K2, 15,  1, x)
-    a, c = R(a, b, c, d, e, F2, K2, 14,  2, x)
-    e, b = R(e, a, b, c, d, F2, K2,  8,  7, x)
-    d, a = R(d, e, a, b, c, F2, K2, 13,  0, x)
-    c, e = R(c, d, e, a, b, F2, K2,  6,  6, x)
-    b, d = R(b, c, d, e, a, F2, K2,  5, 13, x)
-    a, c = R(a, b, c, d, e, F2, K2, 12, 11, x)
-    e, b = R(e, a, b, c, d, F2, K2,  7,  5, x)
-    d, a = R(d, e, a, b, c, F2, K2,  5, 12, x) #/* #47 */
-    #/* Round 4 */
-    c, e = R(c, d, e, a, b, F3, K3, 11,  1, x)
-    b, d = R(b, c, d, e, a, F3, K3, 12,  9, x)
-    a, c = R(a, b, c, d, e, F3, K3, 14, 11, x)
-    e, b = R(e, a, b, c, d, F3, K3, 15, 10, x)
-    d, a = R(d, e, a, b, c, F3, K3, 14,  0, x)
-    c, e = R(c, d, e, a, b, F3, K3, 15,  8, x)
-    b, d = R(b, c, d, e, a, F3, K3,  9, 12, x)
-    a, c = R(a, b, c, d, e, F3, K3,  8,  4, x)
-    e, b = R(e, a, b, c, d, F3, K3,  9, 13, x)
-    d, a = R(d, e, a, b, c, F3, K3, 14,  3, x)
-    c, e = R(c, d, e, a, b, F3, K3,  5,  7, x)
-    b, d = R(b, c, d, e, a, F3, K3,  6, 15, x)
-    a, c = R(a, b, c, d, e, F3, K3,  8, 14, x)
-    e, b = R(e, a, b, c, d, F3, K3,  6,  5, x)
-    d, a = R(d, e, a, b, c, F3, K3,  5,  6, x)
-    c, e = R(c, d, e, a, b, F3, K3, 12,  2, x) #/* #63 */
-    #/* Round 5 */
-    b, d = R(b, c, d, e, a, F4, K4,  9,  4, x)
-    a, c = R(a, b, c, d, e, F4, K4, 15,  0, x)
-    e, b = R(e, a, b, c, d, F4, K4,  5,  5, x)
-    d, a = R(d, e, a, b, c, F4, K4, 11,  9, x)
-    c, e = R(c, d, e, a, b, F4, K4,  6,  7, x)
-    b, d = R(b, c, d, e, a, F4, K4,  8, 12, x)
-    a, c = R(a, b, c, d, e, F4, K4, 13,  2, x)
-    e, b = R(e, a, b, c, d, F4, K4, 12, 10, x)
-    d, a = R(d, e, a, b, c, F4, K4,  5, 14, x)
-    c, e = R(c, d, e, a, b, F4, K4, 12,  1, x)
-    b, d = R(b, c, d, e, a, F4, K4, 13,  3, x)
-    a, c = R(a, b, c, d, e, F4, K4, 14,  8, x)
-    e, b = R(e, a, b, c, d, F4, K4, 11, 11, x)
-    d, a = R(d, e, a, b, c, F4, K4,  8,  6, x)
-    c, e = R(c, d, e, a, b, F4, K4,  5, 15, x)
-    b, d = R(b, c, d, e, a, F4, K4,  6, 13, x) #/* #79 */
+    # 2. Extract out2 (the 20 bytes following the version byte)
+    # out2 starts at index 1 and ends at index 21
+    out2 = decoded_bytes[1:21]
 
-    aa = a
-    bb = b
-    cc = c
-    dd = d
-    ee = e
+    # 3. Extract the checksum (the last 4 bytes)
+    checksum = decoded_bytes[21:]
 
-    a = state[0]
-    b = state[1]
-    c = state[2]
-    d = state[3]
-    e = state[4]
-
-    #/* Parallel round 1 */
-    a, c = R(a, b, c, d, e, F4, KK0,  8,  5, x)
-    e, b = R(e, a, b, c, d, F4, KK0,  9, 14, x)
-    d, a = R(d, e, a, b, c, F4, KK0,  9,  7, x)
-    c, e = R(c, d, e, a, b, F4, KK0, 11,  0, x)
-    b, d = R(b, c, d, e, a, F4, KK0, 13,  9, x)
-    a, c = R(a, b, c, d, e, F4, KK0, 15,  2, x)
-    e, b = R(e, a, b, c, d, F4, KK0, 15, 11, x)
-    d, a = R(d, e, a, b, c, F4, KK0,  5,  4, x)
-    c, e = R(c, d, e, a, b, F4, KK0,  7, 13, x)
-    b, d = R(b, c, d, e, a, F4, KK0,  7,  6, x)
-    a, c = R(a, b, c, d, e, F4, KK0,  8, 15, x)
-    e, b = R(e, a, b, c, d, F4, KK0, 11,  8, x)
-    d, a = R(d, e, a, b, c, F4, KK0, 14,  1, x)
-    c, e = R(c, d, e, a, b, F4, KK0, 14, 10, x)
-    b, d = R(b, c, d, e, a, F4, KK0, 12,  3, x)
-    a, c = R(a, b, c, d, e, F4, KK0,  6, 12, x) #/* #15 */
-    #/* Parallel round 2 */
-    e, b = R(e, a, b, c, d, F3, KK1,  9,  6, x)
-    d, a = R(d, e, a, b, c, F3, KK1, 13, 11, x)
-    c, e = R(c, d, e, a, b, F3, KK1, 15,  3, x)
-    b, d = R(b, c, d, e, a, F3, KK1,  7,  7, x)
-    a, c = R(a, b, c, d, e, F3, KK1, 12,  0, x)
-    e, b = R(e, a, b, c, d, F3, KK1,  8, 13, x)
-    d, a = R(d, e, a, b, c, F3, KK1,  9,  5, x)
-    c, e = R(c, d, e, a, b, F3, KK1, 11, 10, x)
-    b, d = R(b, c, d, e, a, F3, KK1,  7, 14, x)
-    a, c = R(a, b, c, d, e, F3, KK1,  7, 15, x)
-    e, b = R(e, a, b, c, d, F3, KK1, 12,  8, x)
-    d, a = R(d, e, a, b, c, F3, KK1,  7, 12, x)
-    c, e = R(c, d, e, a, b, F3, KK1,  6,  4, x)
-    b, d = R(b, c, d, e, a, F3, KK1, 15,  9, x)
-    a, c = R(a, b, c, d, e, F3, KK1, 13,  1, x)
-    e, b = R(e, a, b, c, d, F3, KK1, 11,  2, x) #/* #31 */
-    #/* Parallel round 3 */
-    d, a = R(d, e, a, b, c, F2, KK2,  9, 15, x)
-    c, e = R(c, d, e, a, b, F2, KK2,  7,  5, x)
-    b, d = R(b, c, d, e, a, F2, KK2, 15,  1, x)
-    a, c = R(a, b, c, d, e, F2, KK2, 11,  3, x)
-    e, b = R(e, a, b, c, d, F2, KK2,  8,  7, x)
-    d, a = R(d, e, a, b, c, F2, KK2,  6, 14, x)
-    c, e = R(c, d, e, a, b, F2, KK2,  6,  6, x)
-    b, d = R(b, c, d, e, a, F2, KK2, 14,  9, x)
-    a, c = R(a, b, c, d, e, F2, KK2, 12, 11, x)
-    e, b = R(e, a, b, c, d, F2, KK2, 13,  8, x)
-    d, a = R(d, e, a, b, c, F2, KK2,  5, 12, x)
-    c, e = R(c, d, e, a, b, F2, KK2, 14,  2, x)
-    b, d = R(b, c, d, e, a, F2, KK2, 13, 10, x)
-    a, c = R(a, b, c, d, e, F2, KK2, 13,  0, x)
-    e, b = R(e, a, b, c, d, F2, KK2,  7,  4, x)
-    d, a = R(d, e, a, b, c, F2, KK2,  5, 13, x) #/* #47 */
-    #/* Parallel round 4 */
-    c, e = R(c, d, e, a, b, F1, KK3, 15,  8, x)
-    b, d = R(b, c, d, e, a, F1, KK3,  5,  6, x)
-    a, c = R(a, b, c, d, e, F1, KK3,  8,  4, x)
-    e, b = R(e, a, b, c, d, F1, KK3, 11,  1, x)
-    d, a = R(d, e, a, b, c, F1, KK3, 14,  3, x)
-    c, e = R(c, d, e, a, b, F1, KK3, 14, 11, x)
-    b, d = R(b, c, d, e, a, F1, KK3,  6, 15, x)
-    a, c = R(a, b, c, d, e, F1, KK3, 14,  0, x)
-    e, b = R(e, a, b, c, d, F1, KK3,  6,  5, x)
-    d, a = R(d, e, a, b, c, F1, KK3,  9, 12, x)
-    c, e = R(c, d, e, a, b, F1, KK3, 12,  2, x)
-    b, d = R(b, c, d, e, a, F1, KK3,  9, 13, x)
-    a, c = R(a, b, c, d, e, F1, KK3, 12,  9, x)
-    e, b = R(e, a, b, c, d, F1, KK3,  5,  7, x)
-    d, a = R(d, e, a, b, c, F1, KK3, 15, 10, x)
-    c, e = R(c, d, e, a, b, F1, KK3,  8, 14, x) #/* #63 */
-    #/* Parallel round 5 */
-    b, d = R(b, c, d, e, a, F0, KK4,  8, 12, x)
-    a, c = R(a, b, c, d, e, F0, KK4,  5, 15, x)
-    e, b = R(e, a, b, c, d, F0, KK4, 12, 10, x)
-    d, a = R(d, e, a, b, c, F0, KK4,  9,  4, x)
-    c, e = R(c, d, e, a, b, F0, KK4, 12,  1, x)
-    b, d = R(b, c, d, e, a, F0, KK4,  5,  5, x)
-    a, c = R(a, b, c, d, e, F0, KK4, 14,  8, x)
-    e, b = R(e, a, b, c, d, F0, KK4,  6,  7, x)
-    d, a = R(d, e, a, b, c, F0, KK4,  8,  6, x)
-    c, e = R(c, d, e, a, b, F0, KK4, 13,  2, x)
-    b, d = R(b, c, d, e, a, F0, KK4,  6, 13, x)
-    a, c = R(a, b, c, d, e, F0, KK4,  5, 14, x)
-    e, b = R(e, a, b, c, d, F0, KK4, 15,  0, x)
-    d, a = R(d, e, a, b, c, F0, KK4, 13,  3, x)
-    c, e = R(c, d, e, a, b, F0, KK4, 11,  9, x)
-    b, d = R(b, c, d, e, a, F0, KK4, 11, 11, x) #/* #79 */
-
-    t = (state[1] + cc + d) % 0x100000000
-    state[1] = (state[2] + dd + e) % 0x100000000
-    state[2] = (state[3] + ee + a) % 0x100000000
-    state[3] = (state[4] + aa + b) % 0x100000000
-    state[4] = (state[0] + bb + c) % 0x100000000
-    state[0] = t % 0x100000000
+    return out2, checksum
 
 
 if __name__ == '__main__':
@@ -586,11 +353,287 @@ if __name__ == '__main__':
         z = inverse_mod(Z3, _p)
     x, y = int(X3 * z**2 % _p), int(Y3 * z**3 % _p)
 
-    public_key_compressed = (2 + (y & 1)).to_bytes(1, byteorder='big') + x.to_bytes(32, byteorder='big')
+    message = (2 + (y & 1)).to_bytes(1, byteorder='big') + x.to_bytes(32, byteorder='big')
+    message = bytearray(message) + b'\x80\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x08'
 
-    out1 = generate_hash(public_key_compressed)
+    # Parsing
+    blocks = [] # contains 512-bit chunks of message
+    for i in range(0, len(message), 64): # 64 bytes is 512 bits
+        blocks.append(message[i:i+64])
 
-    out2 = ripemd160(out1)
+    # Setting Initial Hash Value
+    h0 = 0x6a09e667
+    h1 = 0xbb67ae85
+    h2 = 0x3c6ef372
+    h3 = 0xa54ff53a
+    h5 = 0x9b05688c
+    h4 = 0x510e527f
+    h6 = 0x1f83d9ab
+    h7 = 0x5be0cd19
+
+    message_schedule = []
+    for t in range(0, 64):
+        if t <= 15:
+            # adds the t'th 32 bit word of the block,
+            # starting from leftmost word
+            # 4 bytes at a time
+            message_schedule.append(bytes(message[t*4:(t*4)+4]))
+        else:
+            term1 = _sigma1(int.from_bytes(message_schedule[t-2], 'big'))
+            term2 = int.from_bytes(message_schedule[t-7], 'big')
+            term3 = _sigma0(int.from_bytes(message_schedule[t-15], 'big'))
+            term4 = int.from_bytes(message_schedule[t-16], 'big')
+
+            # append a 4-byte byte object
+            schedule = ((term1 + term2 + term3 + term4) % 2**32).to_bytes(4, 'big')
+            message_schedule.append(schedule)
+
+    assert len(message_schedule) == 64
+
+    # Initialize working variables
+    a = h0
+    b = h1
+    c = h2
+    d = h3
+    e = h4
+    f = h5
+    g = h6
+    h = h7
+
+    # Iterate for t=0 to 63
+    for t in range(64):
+        t1 = ((h + _capsigma1(e) + _ch(e, f, g) + K[t] +
+               int.from_bytes(message_schedule[t], 'big')) % 2**32)
+
+        t2 = (_capsigma0(a) + _maj(a, b, c)) % 2**32
+
+        h = g
+        g = f
+        f = e
+        e = (d + t1) % 2**32
+        d = c
+        c = b
+        b = a
+        a = (t1 + t2) % 2**32
+
+    # Compute intermediate hash value
+    h0 = (h0 + a) % 2**32
+    h1 = (h1 + b) % 2**32
+    h2 = (h2 + c) % 2**32
+    h3 = (h3 + d) % 2**32
+    h4 = (h4 + e) % 2**32
+    h5 = (h5 + f) % 2**32
+    h6 = (h6 + g) % 2**32
+    h7 = (h7 + h) % 2**32
+
+    out1 = ((h0).to_bytes(4, 'big') + (h1).to_bytes(4, 'big') +
+            (h2).to_bytes(4, 'big') + (h3).to_bytes(4, 'big') +
+            (h4).to_bytes(4, 'big') + (h5).to_bytes(4, 'big') +
+            (h6).to_bytes(4, 'big') + (h7).to_bytes(4, 'big'))
+
+
+    state = [1732584193, 4023233417, 2562383102, 271733878, 3285377520]
+    buffer = out1 + bytes([128] + [0] * 23) + b'\x00\x01\x00\x00\x00\x00\x00\x00'
+    x = struct.unpack('<16L', bytes(buffer[0:64]))
+
+    a = state[0]
+    b = state[1]
+    c = state[2]
+    d = state[3]
+    e = state[4]
+
+    # /* Round 1 */
+    a, c = R(a, b, c, d, e, F0, K0, 11, 0, x)
+    e, b = R(e, a, b, c, d, F0, K0, 14, 1, x)
+    d, a = R(d, e, a, b, c, F0, K0, 15, 2, x)
+    c, e = R(c, d, e, a, b, F0, K0, 12, 3, x)
+    b, d = R(b, c, d, e, a, F0, K0, 5, 4, x)
+    a, c = R(a, b, c, d, e, F0, K0, 8, 5, x)
+    e, b = R(e, a, b, c, d, F0, K0, 7, 6, x)
+    d, a = R(d, e, a, b, c, F0, K0, 9, 7, x)
+    c, e = R(c, d, e, a, b, F0, K0, 11, 8, x)
+    b, d = R(b, c, d, e, a, F0, K0, 13, 9, x)
+    a, c = R(a, b, c, d, e, F0, K0, 14, 10, x)
+    e, b = R(e, a, b, c, d, F0, K0, 15, 11, x)
+    d, a = R(d, e, a, b, c, F0, K0, 6, 12, x)
+    c, e = R(c, d, e, a, b, F0, K0, 7, 13, x)
+    b, d = R(b, c, d, e, a, F0, K0, 9, 14, x)
+    a, c = R(a, b, c, d, e, F0, K0, 8, 15, x)  # /* #15 */
+    # /* Round 2 */
+    e, b = R(e, a, b, c, d, F1, K1, 7, 7, x)
+    d, a = R(d, e, a, b, c, F1, K1, 6, 4, x)
+    c, e = R(c, d, e, a, b, F1, K1, 8, 13, x)
+    b, d = R(b, c, d, e, a, F1, K1, 13, 1, x)
+    a, c = R(a, b, c, d, e, F1, K1, 11, 10, x)
+    e, b = R(e, a, b, c, d, F1, K1, 9, 6, x)
+    d, a = R(d, e, a, b, c, F1, K1, 7, 15, x)
+    c, e = R(c, d, e, a, b, F1, K1, 15, 3, x)
+    b, d = R(b, c, d, e, a, F1, K1, 7, 12, x)
+    a, c = R(a, b, c, d, e, F1, K1, 12, 0, x)
+    e, b = R(e, a, b, c, d, F1, K1, 15, 9, x)
+    d, a = R(d, e, a, b, c, F1, K1, 9, 5, x)
+    c, e = R(c, d, e, a, b, F1, K1, 11, 2, x)
+    b, d = R(b, c, d, e, a, F1, K1, 7, 14, x)
+    a, c = R(a, b, c, d, e, F1, K1, 13, 11, x)
+    e, b = R(e, a, b, c, d, F1, K1, 12, 8, x)  # /* #31 */
+    # /* Round 3 */
+    d, a = R(d, e, a, b, c, F2, K2, 11, 3, x)
+    c, e = R(c, d, e, a, b, F2, K2, 13, 10, x)
+    b, d = R(b, c, d, e, a, F2, K2, 6, 14, x)
+    a, c = R(a, b, c, d, e, F2, K2, 7, 4, x)
+    e, b = R(e, a, b, c, d, F2, K2, 14, 9, x)
+    d, a = R(d, e, a, b, c, F2, K2, 9, 15, x)
+    c, e = R(c, d, e, a, b, F2, K2, 13, 8, x)
+    b, d = R(b, c, d, e, a, F2, K2, 15, 1, x)
+    a, c = R(a, b, c, d, e, F2, K2, 14, 2, x)
+    e, b = R(e, a, b, c, d, F2, K2, 8, 7, x)
+    d, a = R(d, e, a, b, c, F2, K2, 13, 0, x)
+    c, e = R(c, d, e, a, b, F2, K2, 6, 6, x)
+    b, d = R(b, c, d, e, a, F2, K2, 5, 13, x)
+    a, c = R(a, b, c, d, e, F2, K2, 12, 11, x)
+    e, b = R(e, a, b, c, d, F2, K2, 7, 5, x)
+    d, a = R(d, e, a, b, c, F2, K2, 5, 12, x)  # /* #47 */
+    # /* Round 4 */
+    c, e = R(c, d, e, a, b, F3, K3, 11, 1, x)
+    b, d = R(b, c, d, e, a, F3, K3, 12, 9, x)
+    a, c = R(a, b, c, d, e, F3, K3, 14, 11, x)
+    e, b = R(e, a, b, c, d, F3, K3, 15, 10, x)
+    d, a = R(d, e, a, b, c, F3, K3, 14, 0, x)
+    c, e = R(c, d, e, a, b, F3, K3, 15, 8, x)
+    b, d = R(b, c, d, e, a, F3, K3, 9, 12, x)
+    a, c = R(a, b, c, d, e, F3, K3, 8, 4, x)
+    e, b = R(e, a, b, c, d, F3, K3, 9, 13, x)
+    d, a = R(d, e, a, b, c, F3, K3, 14, 3, x)
+    c, e = R(c, d, e, a, b, F3, K3, 5, 7, x)
+    b, d = R(b, c, d, e, a, F3, K3, 6, 15, x)
+    a, c = R(a, b, c, d, e, F3, K3, 8, 14, x)
+    e, b = R(e, a, b, c, d, F3, K3, 6, 5, x)
+    d, a = R(d, e, a, b, c, F3, K3, 5, 6, x)
+    c, e = R(c, d, e, a, b, F3, K3, 12, 2, x)  # /* #63 */
+    # /* Round 5 */
+    b, d = R(b, c, d, e, a, F4, K4, 9, 4, x)
+    a, c = R(a, b, c, d, e, F4, K4, 15, 0, x)
+    e, b = R(e, a, b, c, d, F4, K4, 5, 5, x)
+    d, a = R(d, e, a, b, c, F4, K4, 11, 9, x)
+    c, e = R(c, d, e, a, b, F4, K4, 6, 7, x)
+    b, d = R(b, c, d, e, a, F4, K4, 8, 12, x)
+    a, c = R(a, b, c, d, e, F4, K4, 13, 2, x)
+    e, b = R(e, a, b, c, d, F4, K4, 12, 10, x)
+    d, a = R(d, e, a, b, c, F4, K4, 5, 14, x)
+    c, e = R(c, d, e, a, b, F4, K4, 12, 1, x)
+    b, d = R(b, c, d, e, a, F4, K4, 13, 3, x)
+    a, c = R(a, b, c, d, e, F4, K4, 14, 8, x)
+    e, b = R(e, a, b, c, d, F4, K4, 11, 11, x)
+    d, a = R(d, e, a, b, c, F4, K4, 8, 6, x)
+    c, e = R(c, d, e, a, b, F4, K4, 5, 15, x)
+    b, d = R(b, c, d, e, a, F4, K4, 6, 13, x)  # /* #79 */
+
+    aa = a
+    bb = b
+    cc = c
+    dd = d
+    ee = e
+
+    a = state[0]
+    b = state[1]
+    c = state[2]
+    d = state[3]
+    e = state[4]
+
+    # /* Parallel round 1 */
+    a, c = R(a, b, c, d, e, F4, KK0, 8, 5, x)
+    e, b = R(e, a, b, c, d, F4, KK0, 9, 14, x)
+    d, a = R(d, e, a, b, c, F4, KK0, 9, 7, x)
+    c, e = R(c, d, e, a, b, F4, KK0, 11, 0, x)
+    b, d = R(b, c, d, e, a, F4, KK0, 13, 9, x)
+    a, c = R(a, b, c, d, e, F4, KK0, 15, 2, x)
+    e, b = R(e, a, b, c, d, F4, KK0, 15, 11, x)
+    d, a = R(d, e, a, b, c, F4, KK0, 5, 4, x)
+    c, e = R(c, d, e, a, b, F4, KK0, 7, 13, x)
+    b, d = R(b, c, d, e, a, F4, KK0, 7, 6, x)
+    a, c = R(a, b, c, d, e, F4, KK0, 8, 15, x)
+    e, b = R(e, a, b, c, d, F4, KK0, 11, 8, x)
+    d, a = R(d, e, a, b, c, F4, KK0, 14, 1, x)
+    c, e = R(c, d, e, a, b, F4, KK0, 14, 10, x)
+    b, d = R(b, c, d, e, a, F4, KK0, 12, 3, x)
+    a, c = R(a, b, c, d, e, F4, KK0, 6, 12, x)  # /* #15 */
+    # /* Parallel round 2 */
+    e, b = R(e, a, b, c, d, F3, KK1, 9, 6, x)
+    d, a = R(d, e, a, b, c, F3, KK1, 13, 11, x)
+    c, e = R(c, d, e, a, b, F3, KK1, 15, 3, x)
+    b, d = R(b, c, d, e, a, F3, KK1, 7, 7, x)
+    a, c = R(a, b, c, d, e, F3, KK1, 12, 0, x)
+    e, b = R(e, a, b, c, d, F3, KK1, 8, 13, x)
+    d, a = R(d, e, a, b, c, F3, KK1, 9, 5, x)
+    c, e = R(c, d, e, a, b, F3, KK1, 11, 10, x)
+    b, d = R(b, c, d, e, a, F3, KK1, 7, 14, x)
+    a, c = R(a, b, c, d, e, F3, KK1, 7, 15, x)
+    e, b = R(e, a, b, c, d, F3, KK1, 12, 8, x)
+    d, a = R(d, e, a, b, c, F3, KK1, 7, 12, x)
+    c, e = R(c, d, e, a, b, F3, KK1, 6, 4, x)
+    b, d = R(b, c, d, e, a, F3, KK1, 15, 9, x)
+    a, c = R(a, b, c, d, e, F3, KK1, 13, 1, x)
+    e, b = R(e, a, b, c, d, F3, KK1, 11, 2, x)  # /* #31 */
+    # /* Parallel round 3 */
+    d, a = R(d, e, a, b, c, F2, KK2, 9, 15, x)
+    c, e = R(c, d, e, a, b, F2, KK2, 7, 5, x)
+    b, d = R(b, c, d, e, a, F2, KK2, 15, 1, x)
+    a, c = R(a, b, c, d, e, F2, KK2, 11, 3, x)
+    e, b = R(e, a, b, c, d, F2, KK2, 8, 7, x)
+    d, a = R(d, e, a, b, c, F2, KK2, 6, 14, x)
+    c, e = R(c, d, e, a, b, F2, KK2, 6, 6, x)
+    b, d = R(b, c, d, e, a, F2, KK2, 14, 9, x)
+    a, c = R(a, b, c, d, e, F2, KK2, 12, 11, x)
+    e, b = R(e, a, b, c, d, F2, KK2, 13, 8, x)
+    d, a = R(d, e, a, b, c, F2, KK2, 5, 12, x)
+    c, e = R(c, d, e, a, b, F2, KK2, 14, 2, x)
+    b, d = R(b, c, d, e, a, F2, KK2, 13, 10, x)
+    a, c = R(a, b, c, d, e, F2, KK2, 13, 0, x)
+    e, b = R(e, a, b, c, d, F2, KK2, 7, 4, x)
+    d, a = R(d, e, a, b, c, F2, KK2, 5, 13, x)  # /* #47 */
+    # /* Parallel round 4 */
+    c, e = R(c, d, e, a, b, F1, KK3, 15, 8, x)
+    b, d = R(b, c, d, e, a, F1, KK3, 5, 6, x)
+    a, c = R(a, b, c, d, e, F1, KK3, 8, 4, x)
+    e, b = R(e, a, b, c, d, F1, KK3, 11, 1, x)
+    d, a = R(d, e, a, b, c, F1, KK3, 14, 3, x)
+    c, e = R(c, d, e, a, b, F1, KK3, 14, 11, x)
+    b, d = R(b, c, d, e, a, F1, KK3, 6, 15, x)
+    a, c = R(a, b, c, d, e, F1, KK3, 14, 0, x)
+    e, b = R(e, a, b, c, d, F1, KK3, 6, 5, x)
+    d, a = R(d, e, a, b, c, F1, KK3, 9, 12, x)
+    c, e = R(c, d, e, a, b, F1, KK3, 12, 2, x)
+    b, d = R(b, c, d, e, a, F1, KK3, 9, 13, x)
+    a, c = R(a, b, c, d, e, F1, KK3, 12, 9, x)
+    e, b = R(e, a, b, c, d, F1, KK3, 5, 7, x)
+    d, a = R(d, e, a, b, c, F1, KK3, 15, 10, x)
+    c, e = R(c, d, e, a, b, F1, KK3, 8, 14, x)  # /* #63 */
+    # /* Parallel round 5 */
+    b, d = R(b, c, d, e, a, F0, KK4, 8, 12, x)
+    a, c = R(a, b, c, d, e, F0, KK4, 5, 15, x)
+    e, b = R(e, a, b, c, d, F0, KK4, 12, 10, x)
+    d, a = R(d, e, a, b, c, F0, KK4, 9, 4, x)
+    c, e = R(c, d, e, a, b, F0, KK4, 12, 1, x)
+    b, d = R(b, c, d, e, a, F0, KK4, 5, 5, x)
+    a, c = R(a, b, c, d, e, F0, KK4, 14, 8, x)
+    e, b = R(e, a, b, c, d, F0, KK4, 6, 7, x)
+    d, a = R(d, e, a, b, c, F0, KK4, 8, 6, x)
+    c, e = R(c, d, e, a, b, F0, KK4, 13, 2, x)
+    b, d = R(b, c, d, e, a, F0, KK4, 6, 13, x)
+    a, c = R(a, b, c, d, e, F0, KK4, 5, 14, x)
+    e, b = R(e, a, b, c, d, F0, KK4, 15, 0, x)
+    d, a = R(d, e, a, b, c, F0, KK4, 13, 3, x)
+    c, e = R(c, d, e, a, b, F0, KK4, 11, 9, x)
+    b, d = R(b, c, d, e, a, F0, KK4, 11, 11, x)  # /* #79 */
+
+    t = (state[1] + cc + d) % 0x100000000
+    state[1] = (state[2] + dd + e) % 0x100000000
+    state[2] = (state[3] + ee + a) % 0x100000000
+    state[3] = (state[4] + aa + b) % 0x100000000
+    state[4] = (state[0] + bb + c) % 0x100000000
+    state[0] = t % 0x100000000
+
+    out2 = struct.pack("<5L", *state)
 
     s1 = generate_hash(b'\x00' + out2)
     s2 = generate_hash(s1)
@@ -598,6 +641,18 @@ if __name__ == '__main__':
 
     addr_p2pkh_compressed = base58.b58encode(b'\x00' + out2 + checksum)
 
-
     if addr_p2pkh_compressed and addr_p2pkh_compressed.decode('ascii') == "13ia7qiYrjvYyH2X8yqW5Nih8PZyTANQdU":
         print("legacy address (p2pkh compressed) = {}".format(addr_p2pkh_compressed.decode('ascii')))
+
+    rev_out2, rev_checksum = reverse_p2pkh(addr_p2pkh_compressed)
+    if rev_out2 == out2 and rev_checksum == checksum:
+        print("Good reverse to out2 and checksum")
+
+    target_address = '13KYdPnzGh5H8exFY3FhUo9Rvvs6kKAcL8'.encode('ascii')
+    target_out2, target_checksum = reverse_p2pkh(target_address)
+    s1 = generate_hash(b'\x00' + target_out2)
+    s2 = generate_hash(s1)
+    calculated_target_checksum = s2[0:4]
+    print("target out2 = {}".format(target_out2))
+    print("target checksum = {}".format(target_checksum))
+    print("calculated target checksum = {}".format(calculated_target_checksum))
